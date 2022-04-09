@@ -32,7 +32,7 @@ class Zone:
         print("pullZoneBlocks: pulling all blocks from cuboid in start and end coords -", startCoord, endCoord)
         self.zoneBlocks = self.pullZoneBlocks(startCoord, endCoord)
         print("Successfully pulled zone blocks.")
-        print("calculateSurfaceBlocks: calculating surface blocks from startHeigh -", startHeight)
+        print("calculateSurfaceBlocks: calculating surface blocks from startHeight -", startHeight)
         self.calculateSurfaceBlocks(startHeight)
         print("Successfully calculated the zone's surface blocks.")
 
@@ -66,6 +66,7 @@ class Zone:
     # startHeight describes the y coord at which the function starts searching down for the first non-air block
     # Sets surfaceBlocks to 2d matrix ordered by X, Z, containing the block on the surface of that SQUARE
     # TODO: ignore trees and other non-ground structures
+    # TODO: ignore water
     def calculateSurfaceBlocks(self, startHeight):
         zoneBlocks = self.zoneBlocks
         surfaceBlocks = {}
@@ -109,7 +110,7 @@ class Zone:
         [(), (), (), (), ()],
         [(), (), (), (), ()]]
     """
-    def locateFlatAreas(self, maxPlotRadius):
+    def generateElevationStds(self, maxPlotRadius, reverse=False):
         elevationStds = []
 
         zoneMinX = min(self.startCoord[0], self.endCoord[0])
@@ -132,17 +133,59 @@ class Zone:
                 surfaceBlock = self.getSurfaceBlock(x, z)
                 elevationStds.append((surfaceBlock, blockElevationStd))  # append tuple of coords + elevationStd
 
-        sortedElevationStds = sorted(elevationStds, key=lambda x:x[1], reverse=False)  # sort by descending elevation std 
+        sortedElevationStds = sorted(elevationStds, key=lambda x:x[1], reverse=reverse)  # sort by descending elevation std 
 
-        for i in range(10):
-            print("STD", sortedElevationStds[i][1], "\t", end=" ")
-            sortedElevationStds[i][0].info()
+        return sortedElevationStds
+
+    
+    # helper function that checks if plot is isolated far enough from other chosen plots
+    def plotIsIsolated(self, checkPlot, chosenPlots, minDistance):
+        for chosenPlot in chosenPlots:
+            plotDistance = abs(chosenPlot[0].x - checkPlot[0].x) + abs(chosenPlot[0].z - checkPlot[0].z)
+            if plotDistance < minDistance:
+                return False
+        return True
+            
+
+
+    def locateFlatAreas(self, maxPlotRadius, amountOfPlots, reverse=False):
+        print("Locating flat areas..")
+        elevationStds = self.generateElevationStds(maxPlotRadius, reverse)
+
+        chosenPlots = []
+
+        for surfaceBlock in elevationStds:
+            if len(chosenPlots) >= amountOfPlots:
+                break
+            if self.plotIsIsolated(surfaceBlock, chosenPlots, 4 * maxPlotRadius):
+                chosenPlots.append(surfaceBlock)
+                print("STD", surfaceBlock[1], "\t", end=" ")
+                surfaceBlock[0].info()
+                Landscaper.placeBeacon(self.mcApi, surfaceBlock[0].x, surfaceBlock[0].y, surfaceBlock[0].z, True)
+                time.sleep(0.2)  # for dramatic effect
+
+        print("Finished locating plots.")
+            
+            
+
+
+
+class Landscaper:
+    @staticmethod
+    def placeBeacon(mcApi, x, y, z, verbose=False):
+        mcApi.setBlock(x, y, z, 138)
+        mcApi.setBlocks(x-1, y-1, z-1, x+1, y-1, z+1, block.DIAMOND_BLOCK)
+        if verbose:
+            print("Placed beacon at:", x, y, z)
 
 
 
 
-ZONE_RADIUS = 50
-SURFACE_SEARCH_START_HEIGHT = 100
+
+ZONE_RADIUS = 100
+SURFACE_SEARCH_START_HEIGHT = 150
+MAX_PLOT_RADIUS = 8
+AMOUNT_OF_PLOTS = 10
 
 start_time = time.time()
 mc = Minecraft.create()
@@ -150,7 +193,7 @@ x_player, y_player, z_player = mc.player.getTilePos()
 print("Player position:", x_player, y_player, z_player)
 
 zoneStartCoords = (x_player-ZONE_RADIUS, y_player-50, z_player-ZONE_RADIUS)
-zoneEndCoords = (x_player+ZONE_RADIUS, y_player+50, z_player+ZONE_RADIUS)
+zoneEndCoords = (x_player+ZONE_RADIUS, y_player+100, z_player+ZONE_RADIUS)
 
 newZone = Zone(mc, zoneStartCoords, zoneEndCoords, SURFACE_SEARCH_START_HEIGHT)
 
@@ -158,7 +201,9 @@ newZone = Zone(mc, zoneStartCoords, zoneEndCoords, SURFACE_SEARCH_START_HEIGHT)
 # newZone.getSurfaceBlock(1, 0).info()
 # newZone.getSurfaceBlock(24, -8).info()
 
-newZone.locateFlatAreas(10)
+newZone.locateFlatAreas(MAX_PLOT_RADIUS, AMOUNT_OF_PLOTS, False)
+
+# ls.placeBeacon(x_player, y_player-1, z_player)
 
 
 
