@@ -21,6 +21,7 @@ class Block:
         print(f"Block: ({self.x}, {self.y}, {self.z}) - ID: {self.id}")
 
 
+
 class Zone:
     def __init__(self, mcApi, startCoord, endCoord, startHeight):  
         self.mcApi = mcApi  # is this how we should be passing the mcApi object?
@@ -62,6 +63,37 @@ class Zone:
         return zoneBlocks
 
 
+    def isGroundBlock(self, blockId):
+        # auto-return false on air
+        if blockId == 0:
+            return False
+        
+        groundBlockIds = [
+            block.WATER.id,
+            block.WATER_STATIONARY.id,
+            block.STONE.id,
+            block.GRASS.id,
+            block.DIRT.id,
+            block.COBBLESTONE.id,
+            block.SAND.id,
+            block.GRAVEL.id,
+            block.SANDSTONE.id,
+            block.ICE.id,
+            block.SNOW_BLOCK.id,
+            block.CLAY.id,
+            block.COAL_ORE.id,
+            block.IRON_ORE.id,
+        ]
+
+        for groundBlockId in groundBlockIds:
+            if blockId == groundBlockId:
+                return True
+
+        return False
+        
+        
+
+
     # Uses zoneblocks (3d matrix of blocks - ordered by Y, X, Z)
     # startHeight describes the y coord at which the function starts searching down for the first non-air block
     # Sets surfaceBlocks to 2d matrix ordered by X, Z, containing the block on the surface of that SQUARE
@@ -79,7 +111,7 @@ class Zone:
             x_row = {}
             for z in range(zoneMinZ, zoneMinZ + self.zSize):
                 y = startHeight
-                while y > zoneMinY and zoneBlocks[y][x][z].id == 0:  # keep checking if that squares block id is AIR
+                while y > zoneMinY and not self.isGroundBlock(zoneBlocks[y][x][z].id):  # keep checking if that squares block id is AIR
                     y -= 1
 
                 surfaceBlock = zoneBlocks[y][x][z]
@@ -124,12 +156,17 @@ class Zone:
         for x in range(zoneMinX + maxPlotRadius, zoneMaxX - maxPlotRadius - 1, maxPlotRadius // 2):
             for z in range(zoneMinZ + maxPlotRadius, zoneMaxZ - maxPlotRadius - 1, maxPlotRadius // 2):
                 surroundingBlockHeights = []
+                plotContainsWater = False
+
                 for i in range(-maxPlotRadius, maxPlotRadius + 1):
                     for j in range(-maxPlotRadius, maxPlotRadius + 1):
-                        blockHeight = self.getSurfaceBlock(x + i, z + j).y
+                        surroundingBlock = self.getSurfaceBlock(x + i, z + j)
+                        blockHeight = surroundingBlock.y
                         surroundingBlockHeights.append(blockHeight)
-                # print(surroundingBlockHeights)
-                blockElevationStd = statistics.stdev(surroundingBlockHeights)
+                        if surroundingBlock.id == block.WATER_STATIONARY.id or surroundingBlock.id == block.WATER.id:
+                            plotContainsWater = True
+
+                blockElevationStd = statistics.stdev(surroundingBlockHeights) if not plotContainsWater else 999  # make elevation inf if plot contains water
                 surfaceBlock = self.getSurfaceBlock(x, z)
                 elevationStds.append((surfaceBlock, blockElevationStd))  # append tuple of coords + elevationStd
 
@@ -147,7 +184,6 @@ class Zone:
         return True
             
 
-
     def locateFlatAreas(self, maxPlotRadius, amountOfPlots, reverse=False):
         print("Locating flat areas..")
         elevationStds = self.generateElevationStds(maxPlotRadius, reverse)
@@ -157,7 +193,7 @@ class Zone:
         for surfaceBlock in elevationStds:
             if len(chosenPlots) >= amountOfPlots:
                 break
-            if self.plotIsIsolated(surfaceBlock, chosenPlots, 4 * maxPlotRadius):
+            if self.plotIsIsolated(surfaceBlock, chosenPlots, 3 * maxPlotRadius):
                 chosenPlots.append(surfaceBlock)
                 print("STD", surfaceBlock[1], "\t", end=" ")
                 surfaceBlock[0].info()
@@ -165,8 +201,6 @@ class Zone:
                 time.sleep(0.2)  # for dramatic effect
 
         print("Finished locating plots.")
-            
-            
 
 
 
@@ -182,9 +216,9 @@ class Landscaper:
 
 
 
-ZONE_RADIUS = 100
+ZONE_RADIUS = 50
 SURFACE_SEARCH_START_HEIGHT = 150
-MAX_PLOT_RADIUS = 8
+MAX_PLOT_RADIUS = 5
 AMOUNT_OF_PLOTS = 10
 
 start_time = time.time()
