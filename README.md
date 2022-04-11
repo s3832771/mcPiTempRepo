@@ -13,6 +13,7 @@
 
 ## Where to start
 5. In order to provide a starting point for the other parts of the assignment, plot area selection has been finished and information on each chosen plot can be accessed in the zone object through the zone.chosenPlots attribute.
-* To get started, have a read through the example tomMain.py file, which sets up essential variables and calls methods required for everything to work together.
+* To get started, clone the repo and run the tomMain.py file (with your server and mc client open)
+* have a read through the example tomMain.py file, which sets up essential variables and calls methods required for everything to work together.
 * And feel free to read through the other class files to better understand what each object does and what variables they hold.
 * Side note: beacons are being used to mark out chosen plots for debugging places but can be turned off via a parameter in locatePlots.
