@@ -1,3 +1,4 @@
+from math import sqrt
 import statistics
 import time
 from mcpi.minecraft import Minecraft
@@ -19,6 +20,49 @@ class Block:
 
     def info(self):
         print(f"Block: ({self.x}, {self.y}, {self.z}) - ID: {self.id}")
+
+
+class Plot:
+    def __init__(self, x, y, z, radius):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.radius = radius
+
+
+    def setElevationStd(self, elevationStd):
+        if elevationStd is None:  # calcElevationStd returns none if the plot contains water
+            self.containsWater = True
+            self.elevationStd = 999
+        else:
+            self.containsWater = False    
+            self.elevationStd = elevationStd
+
+
+    # arbitrary value used to calculate plot potential - distance from the town centre
+    def calculateDistanceRating(self, townCentreCoords):
+        (townX, townY, townZ) = townCentreCoords
+        distance = sqrt(abs(self.x - townX) ** 2 + abs(self.z - townZ) ** 2)
+        self.distanceRating = 5 * (distance ** 2) / (100 ** 2)  # hard code 100 radius for now, seems to work well = 45 block dist is as bad as 1 elevation std
+
+
+    # arbitrary value used to calculate plot potential - height distance from the town centre
+    def calculateHeightRating(self,  townCentreCoords):
+        townY = townCentreCoords[1]
+        self.heightRating = abs(self.y - townY) ** 2 / 100  # 10 block dif is as bad as 1 elevation std
+
+
+    def calculateOverallRating(self, elevationWeighting, distanceWeighting, heightWeighting):
+        if elevationWeighting + distanceWeighting + heightWeighting != 1:
+            print("All weights have to add up to 1.")
+            self.overallRating = 999
+        else:
+            self.overallRating = elevationWeighting * self.elevationRating + distanceWeighting * self.distanceRating + self.heightRating * self.heightRating
+
+
+    # refer to docs for justification behind this calc
+    def calculateElevationRating(self):
+        self.elevationRating = (self.elevationStd + 0.5) ** 2
 
 
 
@@ -131,23 +175,28 @@ class Zone:
         return self.surfaceBlocks[x][z]
     
 
-    # Searches for the flattest areas, calculating the elevationStd of each block every half maxPlotRadius
-    # TODO: set temporary beacons at lowest std blocks
-    # TODO: set a min distance between plots
-    """
-    zoneSurfaceBlocks:
-       [[(), (), (), (), ()],
-        [(), (), (), (), ()],
-        [(), (), (), (), ()],
-        [(), (), (), (), ()],
-        [(), (), (), (), ()]]
-    """
-    def generateElevationStds(self, maxPlotRadius, reverse=False):
-        elevationStds = []
+    def calculateElevationStd(self, x, z, maxPlotRadius):
+        surroundingBlockHeights = []
+        plotContainsWater = False
+        
+        for i in range(-maxPlotRadius, maxPlotRadius + 1):
+            for j in range(-maxPlotRadius, maxPlotRadius + 1):
+                surroundingBlock = self.getSurfaceBlock(x + i, z + j)
+                blockHeight = surroundingBlock.y
+                surroundingBlockHeights.append(blockHeight)
+                if surroundingBlock.id == block.WATER_STATIONARY.id or surroundingBlock.id == block.WATER.id:
+                    plotContainsWater = True
+
+        blockElevationStd = statistics.stdev(surroundingBlockHeights)
+
+        return blockElevationStd if not plotContainsWater else None  # return None if the plot contains water so it is rejected from potential plots
+
+
+    def calculatePotentialPlots(self, maxPlotRadius, townCentreCoords, elevationWeighting, distanceWeighting, heightWeighting):
+        potentialPlots = []
 
         zoneMinX = min(self.startCoord[0], self.endCoord[0])
         zoneMinZ = min(self.startCoord[2], self.endCoord[2])
-        
         zoneMaxX = max(self.startCoord[0], self.endCoord[0])
         zoneMaxZ = max(self.startCoord[2], self.endCoord[2])
 
@@ -155,49 +204,52 @@ class Zone:
         # and calculate the slevation std
         for x in range(zoneMinX + maxPlotRadius, zoneMaxX - maxPlotRadius - 1, maxPlotRadius // 2):
             for z in range(zoneMinZ + maxPlotRadius, zoneMaxZ - maxPlotRadius - 1, maxPlotRadius // 2):
-                surroundingBlockHeights = []
-                plotContainsWater = False
-
-                for i in range(-maxPlotRadius, maxPlotRadius + 1):
-                    for j in range(-maxPlotRadius, maxPlotRadius + 1):
-                        surroundingBlock = self.getSurfaceBlock(x + i, z + j)
-                        blockHeight = surroundingBlock.y
-                        surroundingBlockHeights.append(blockHeight)
-                        if surroundingBlock.id == block.WATER_STATIONARY.id or surroundingBlock.id == block.WATER.id:
-                            plotContainsWater = True
-
-                blockElevationStd = statistics.stdev(surroundingBlockHeights) if not plotContainsWater else 999  # make elevation inf if plot contains water
                 surfaceBlock = self.getSurfaceBlock(x, z)
-                elevationStds.append((surfaceBlock, blockElevationStd))  # append tuple of coords + elevationStd
+                newPlot = Plot(x, surfaceBlock.y, z, maxPlotRadius)
+                
+                blockElevationStd = self.calculateElevationStd(x, z, maxPlotRadius)
 
-        sortedElevationStds = sorted(elevationStds, key=lambda x:x[1], reverse=reverse)  # sort by descending elevation std 
+                newPlot.setElevationStd(blockElevationStd)
+                newPlot.calculateElevationRating()
+                newPlot.calculateDistanceRating(townCentreCoords)
+                newPlot.calculateHeightRating(townCentreCoords)
 
-        return sortedElevationStds
+                if not newPlot.containsWater:
+                    newPlot.calculateOverallRating(elevationWeighting, distanceWeighting, heightWeighting)
+                    potentialPlots.append(newPlot)
+
+        sortedPotentialPlots = sorted(potentialPlots, key=lambda x:x.overallRating)
+
+        return sortedPotentialPlots
 
     
     # helper function that checks if plot is isolated far enough from other chosen plots
     def plotIsIsolated(self, checkPlot, chosenPlots, minDistance):
+        minDistance = int(minDistance)
         for chosenPlot in chosenPlots:
-            plotDistance = abs(chosenPlot[0].x - checkPlot[0].x) + abs(chosenPlot[0].z - checkPlot[0].z)
-            if plotDistance < minDistance:
+            plotDistanceX = abs(chosenPlot.x - checkPlot.x)
+            plotDistanceZ = abs(chosenPlot.z - checkPlot.z)
+            if plotDistanceX < minDistance and plotDistanceZ < minDistance:
                 return False
         return True
             
 
-    def locateFlatAreas(self, maxPlotRadius, amountOfPlots, reverse=False):
+    def locateFlatAreas(self, maxPlotRadius, amountOfPlots, townCentreCoords, elevationWeighting, distanceWeighting, heightWeighting):
         print("Locating flat areas..")
-        elevationStds = self.generateElevationStds(maxPlotRadius, reverse)
+        Landscaper.placeTownCentre(self.mcApi, townCentreCoords[0], townCentreCoords[1], townCentreCoords[2])
+        potentialPlots = self.calculatePotentialPlots(maxPlotRadius, townCentreCoords, elevationWeighting, distanceWeighting, heightWeighting)
+        # elevationStds = self.generateElevationStds(maxPlotRadius)
 
         chosenPlots = []
 
-        for surfaceBlock in elevationStds:
+        for plot in potentialPlots:
             if len(chosenPlots) >= amountOfPlots:
                 break
-            if self.plotIsIsolated(surfaceBlock, chosenPlots, 3 * maxPlotRadius):
-                chosenPlots.append(surfaceBlock)
-                print("STD", surfaceBlock[1], "\t", end=" ")
-                surfaceBlock[0].info()
-                Landscaper.placeBeacon(self.mcApi, surfaceBlock[0].x, surfaceBlock[0].y, surfaceBlock[0].z, True)
+            if self.plotIsIsolated(plot, chosenPlots, 2.5 * maxPlotRadius):
+                chosenPlots.append(plot)
+                print(f"Overall Rating: {plot.overallRating:.2f}\tElev STD: {plot.elevationStd:.2f}\tDist Rating: {plot.distanceRating:.2f}\tHeight Rating: {plot.heightRating:.2f}")
+                # print("STD", plot.elevationStd, "\tAt", plot.x, plot.y, plot.z)
+                Landscaper.placeBeacon(self.mcApi, plot.x, plot.y, plot.z, True)
                 time.sleep(0.2)  # for dramatic effect
 
         print("Finished locating plots.")
@@ -212,14 +264,25 @@ class Landscaper:
         if verbose:
             print("Placed beacon at:", x, y, z)
 
+    
+    @staticmethod
+    def placeTownCentre(mcApi, x, y, z, verbose=False):
+        mcApi.setBlocks(x-1, y-1, z-1, x+1, y-1, z+1, block.GOLD_BLOCK)
+        if verbose:
+            print("Placed town centre at:", x, y, z)
 
 
 
 
-ZONE_RADIUS = 50
+
+ZONE_RADIUS = 80
 SURFACE_SEARCH_START_HEIGHT = 150
-MAX_PLOT_RADIUS = 5
+MAX_PLOT_RADIUS = 8
 AMOUNT_OF_PLOTS = 10
+# weights used to calculate ideal plot placement
+ELEVATION_WEIGHTING = 0.5
+DISTANCE_WEIGHTING = 0.4
+HEIGHT_WEIGHTING = 0.1
 
 start_time = time.time()
 mc = Minecraft.create()
@@ -235,9 +298,9 @@ newZone = Zone(mc, zoneStartCoords, zoneEndCoords, SURFACE_SEARCH_START_HEIGHT)
 # newZone.getSurfaceBlock(1, 0).info()
 # newZone.getSurfaceBlock(24, -8).info()
 
-newZone.locateFlatAreas(MAX_PLOT_RADIUS, AMOUNT_OF_PLOTS, False)
+playerPosTuple = (x_player, y_player, z_player)  # temporarily use for town centre
+newZone.locateFlatAreas(MAX_PLOT_RADIUS, AMOUNT_OF_PLOTS, playerPosTuple, ELEVATION_WEIGHTING, DISTANCE_WEIGHTING, HEIGHT_WEIGHTING)
 
-# ls.placeBeacon(x_player, y_player-1, z_player)
 
 
 
